@@ -29,3 +29,8 @@ __pycache__/
 # 电脑版运行时数据（服务端启动时自动创建）
 desktop/books/
 desktop/收书箱/
+
+# Release 签名（绝不入库；keystore 丢失将无法给已装用户推升级，务必备份）
+*.jks
+*.keystore
+keystore.properties
