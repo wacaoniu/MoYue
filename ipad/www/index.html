@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>墨阅</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="墨阅">
+<meta name="theme-color" content="#faf8f4">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<script src="vendor/pdf.min.js"></script>
+<!-- worker 文件按普通脚本加载 → pdf.js 检测到 pdfjsWorker 后走主线程渲染。
+     部分 WebView 里独立 Worker 传输会让渲染 Promise 永不落定，主线程模式兼容性最好 -->
+<script src="vendor/pdf.worker.min.js"></script>
+<style>
+:root{--rbg:#FDFDFB;--rfg:#1B1D22;--ui:#faf8f4;--uiborder:#e5e0d6;--accent:#6D4C2F;
+  --sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--ui);color:var(--rfg);font-family:"PingFang SC","Microsoft YaHei",sans-serif;
+  overflow:hidden;overscroll-behavior:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button{font-family:inherit;cursor:pointer;min-height:44px}
+.hidden{display:none!important}
+.sp{flex:1}
+
+/* ── 书架 ── */
+#library{height:100vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#libHead{position:sticky;top:0;background:var(--ui);border-bottom:1px solid var(--uiborder);
+  padding:calc(10px + var(--sat)) 20px 10px;display:flex;align-items:center;gap:12px;z-index:5}
+#libHead h1{font-size:20px;color:var(--accent)}
+#libHead .fmt{opacity:.45;font-size:12px}
+.btn{border:1px solid var(--uiborder);background:#fff;border-radius:10px;padding:10px 20px;font-size:15px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px;
+  padding:20px 20px calc(40px + var(--sab))}
+.card{background:#fff;border:1px solid var(--uiborder);border-radius:12px;padding:10px;cursor:pointer;
+  transition:box-shadow .15s,transform .15s;user-select:none;-webkit-touch-callout:none}
+@media (hover:hover){.card:hover{box-shadow:0 6px 18px rgba(0,0,0,.12);transform:translateY(-2px)}}
+.cover{height:200px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:34px;color:#f3e9dc;background:linear-gradient(135deg,#6d5b4e,#3e342c);overflow:hidden}
+.cover img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+.card .t{margin-top:8px;font-weight:600;font-size:14px;line-height:1.4;height:39px;overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .a{font-size:12px;opacity:.6;margin:4px 0 8px}
+.pbar{height:4px;border-radius:2px;background:#eee6da;overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--accent)}
+.card .p{font-size:11px;opacity:.6;margin-top:4px}
+#empty{padding:90px 30px;text-align:center;opacity:.6;grid-column:1/-1;line-height:2;font-size:14px}
+#drop{position:fixed;inset:0;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;
+  justify-content:center;font-size:24px;z-index:99;border:4px dashed #fff}
+
+/* ── 阅读器 ── */
+#reader{height:100vh;display:flex;flex-direction:column;background:var(--rbg)}
+#toolbar{background:var(--ui);border-bottom:1px solid var(--uiborder);
+  padding:calc(6px + var(--sat)) 12px 6px;display:flex;align-items:center;gap:6px;font-size:14px;
+  flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}
+#toolbar .tinfo{display:flex;flex-direction:column;min-width:0;max-width:38vw}
+#toolbar .title{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+#toolbar .chapter{opacity:.6;font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.tbtn{border:1px solid var(--uiborder);background:#fff;border-radius:9px;padding:8px 13px;font-size:14px;flex:none}
+@media (hover:hover){.tbtn:hover{border-color:var(--accent);color:var(--accent)}}
+.tbtn.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#stage{flex:1;overflow:auto;position:relative;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#stage::-webkit-scrollbar{width:6px;height:6px}
+#stage::-webkit-scrollbar-thumb{background:rgba(0,0,0,.2);border-radius:3px}
+body.nochrome #toolbar,body.nochrome #bottombar{display:none}
+
+/* 文本模式：Shadow DOM 宿主 */
+#textwrap{width:100%}
+.txthost{display:block}
+
+/* 漫画长条 */
+#strip{margin:0 auto;min-height:100%}
+#strip .ch{width:100%}
+#strip img{display:block;width:100%;height:auto;margin:0;padding:0;border:0;
+  user-select:none;-webkit-touch-callout:none}
+#strip .split-half{width:100%;overflow:hidden}
+#strip .split-half img{width:200%;max-width:none}
+#strip .split-half.second img{margin-left:-100%}
+#strip .pair,#pdfStrip .pair{display:flex;width:100%}
+#strip .pair img{width:50%}
+#pdfStrip .pair .holder{width:50%}
+#strip .pair.seam0,#pdfStrip .pair.seam0{gap:0}
+#strip .pair.seam1,#pdfStrip .pair.seam1{gap:1px}
+#strip .pair.seam2,#pdfStrip .pair.seam2{gap:12px}
+#strip .txtpage{padding:16px;font-size:15px;line-height:1.7}
+#strip .tail{padding:calc(28px + var(--sab)) 0;text-align:center;opacity:.5;font-size:13px}
+
+/* PDF */
+#pdfStrip{margin:0 auto}
+.holder{position:relative;width:100%;background:#2c2c2e}
+.holder canvas{display:block;width:100%;height:100%}
+
+/* 底栏 */
+#bottombar{background:var(--ui);border-top:1px solid var(--uiborder);
+  padding:8px 20px calc(8px + var(--sab));display:flex;align-items:center;gap:14px;font-size:13px}
+#slider{flex:1;accent-color:var(--accent);min-height:44px}
+
+/* 目录抽屉 */
+#toc{position:fixed;top:0;right:0;width:min(360px,86vw);height:100vh;background:var(--ui);
+  border-left:1px solid var(--uiborder);z-index:50;transition:right .2s;display:flex;flex-direction:column;
+  padding-top:var(--sat);padding-bottom:var(--sab)}
+#toc:not(.open){right:-420px;transition:right .2s}
+#toc .h{padding:16px;font-weight:600;border-bottom:1px solid var(--uiborder);display:flex;align-items:center}
+#tocList{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 0}
+#tocList .it{padding:11px 18px;cursor:pointer;font-size:14px}
+#tocList .it.cur{color:var(--accent);font-weight:600}
+@media (hover:hover){#tocList .it:hover{background:rgba(0,0,0,.05)}}
+#tocMask{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:49}
+
+/* 弹出设置面板 */
+.pop{position:fixed;top:calc(64px + var(--sat));right:12px;width:min(330px,calc(100vw - 24px));
+  max-height:calc(100vh - 140px);overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--ui);
+  border:1px solid var(--uiborder);border-radius:14px;padding:16px;z-index:60;
+  box-shadow:0 8px 24px rgba(0,0,0,.15);display:flex;flex-direction:column;gap:14px;font-size:14px}
+.pop .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dot{width:32px;height:32px;border-radius:50%;border:2px solid #ccc;cursor:pointer;flex:none}
+.dot.on{border-color:var(--accent);outline:2px solid var(--accent)}
+.chip{border:1px solid var(--uiborder);background:#fff;border-radius:16px;padding:7px 13px;cursor:pointer;font-size:13px}
+.chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pop .hint{opacity:.55;font-size:12px;line-height:1.6}
+.pop .row#storRow{opacity:.7;font-size:12px}
+#zoomLabel{min-width:44px;text-align:center;font-size:13px;flex:none}
+#toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:rgba(0,0,0,.75);
+  color:#fff;padding:10px 22px;border-radius:20px;font-size:14px;z-index:99;opacity:0;
+  transition:opacity .2s;pointer-events:none;max-width:80vw;text-align:center}
+</style>
+</head>
+<body>
+
+<!-- ══ 书架 ══ -->
+<div id="library">
+  <div id="libHead">
+    <h1 id="libTitle">墨阅</h1>
+    <span class="fmt">EPUB / PDF / TXT / CBZ</span>
+    <span class="sp"></span>
+    <button class="btn primary" id="btnImport2">导入图书</button>
+  </div>
+  <div id="grid"></div>
+  <div id="empty" class="hidden">
+    书架是空的<br>
+    点右上「导入图书」，从 iPad「文件」App 里选 epub / pdf / txt / cbz<br>
+    书会保存在本机，不上传任何服务器<br>
+    <span style="font-size:12px;opacity:.8">（电脑上也可以把文件直接拖进窗口）</span>
+  </div>
+</div>
+<input type="file" id="file" multiple accept=".epub,.pdf,.txt,.cbz" style="display:none">
+<div id="drop" class="hidden">松手导入</div>
+
+<!-- ══ 阅读器 ══ -->
+<div id="reader" class="hidden">
+  <div id="toolbar">
+    <button class="tbtn" id="btnBack">← 书架</button>
+    <div class="tinfo"><span class="title" id="rTitle"></span><span class="chapter" id="rChapter"></span></div>
+    <span class="sp"></span>
+    <button class="tbtn" id="btnPrev">上一章</button>
+    <button class="tbtn" id="btnNext">下一章</button>
+    <button class="tbtn" id="btnToc">目录</button>
+    <button class="tbtn" id="btnSet">Aa</button>
+    <button class="tbtn" id="btnZoomOut">－</button>
+    <span id="zoomLabel">100%</span>
+    <button class="tbtn" id="btnZoomIn">＋</button>
+  </div>
+  <div id="stage">
+    <div id="textwrap" class="hidden"></div>
+    <div id="strip" class="hidden"></div>
+    <div id="pdfStrip" class="hidden"></div>
+  </div>
+  <div id="bottombar">
+    <span id="progressText">0%</span>
+    <input type="range" id="slider" min="0" max="0" value="0" step="1">
+  </div>
+</div>
+
+<div id="tocMask" class="hidden"></div>
+<div id="toc">
+  <div class="h">目录<span class="sp"></span><button class="tbtn" id="tocClose">✕</button></div>
+  <div id="tocList"></div>
+</div>
+
+<div class="pop hidden" id="setPop">
+  <div class="row">主题：
+    <span class="dot on" style="background:#FDFDFB"></span>
+    <span class="dot" style="background:#F6EFDD"></span>
+    <span class="dot" style="background:#CCE6CF"></span>
+    <span class="dot" style="background:#101014"></span>
+  </div>
+  <div class="row" id="fontRow">字号：
+    <button class="tbtn" id="fontMinus">A－</button><span id="fontLabel">100%</span>
+    <button class="tbtn" id="fontPlus">A＋</button>
+  </div>
+  <div class="row" id="seamRow">页间距：
+    <span class="chip" data-v="0">贴合</span>
+    <span class="chip on" data-v="1">细缝</span>
+    <span class="chip" data-v="2">宽缝</span>
+  </div>
+  <div class="row" id="mergeRow">双页合并：
+    <span class="chip on" data-v="0">关闭</span>
+    <span class="chip" data-v="1">左起</span>
+    <span class="chip" data-v="2">右起</span>
+    <span class="chip" data-v="3">左起·第2页起</span>
+    <span class="chip" data-v="4">右起·第2页起</span>
+  </div>
+  <div class="row" id="spreadRow">宽页拆分：
+    <span class="chip on" data-v="0">不拆分</span>
+    <span class="chip" data-v="1">左起</span>
+    <span class="chip" data-v="2">右起</span>
+  </div>
+  <div class="row" id="storRow"><span id="storText"></span></div>
+  <div class="hint">点屏幕左右两侧翻页，点中间收起/呼出菜单；漫画与 PDF 双指捏合缩放、双击复位；长按书架封面删书</div>
+</div>
+<div id="toast"></div>
+
+<script src="moyue-core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

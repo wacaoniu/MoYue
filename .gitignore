@@ -1,0 +1,31 @@
+# Gradle / Android 构建产物
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# ZCode 内部文件
+.zcode/
+.zcode-site/
+.zcode-site.json
+
+# 过大的测试书（120MB，超出 GitHub 单文件限制）
+testbooks/123.epub
+
+# 由 desktop/ 打包生成的分发副本
+墨阅电脑版/
+墨阅电脑版.zip
+
+# Python
+__pycache__/
+*.pyc
+
+# 电脑版运行时数据（服务端启动时自动创建）
+desktop/books/
+desktop/收书箱/
