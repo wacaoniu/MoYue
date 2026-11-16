@@ -293,7 +293,9 @@ function versionNewer(a, b) {
 async function checkUpdate() {
   const btn = $('btnUpdate'); btn.disabled = true; btn.textContent = '检查中…';
   try {
-    const r = await (await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } })).json();
+    const resp = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } });
+    if (resp.status !== 200) throw new Error(`GitHub 返回 ${resp.status}${resp.status === 403 ? '（接口限流，请稍后再试）' : ''}`);
+    const r = await resp.json();
     const tag = (r.tag_name || '').trim();
     if (!tag) throw new Error('发布信息异常');
     const latest = tag.replace(/^v/i, '');
