@@ -15,6 +15,7 @@ import re
 import struct
 import threading
 import time
+import urllib.request
 import uuid
 import webbrowser
 import zipfile
@@ -27,6 +28,10 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 BOOKS = os.path.join(BASE, "books")
 INBOX = os.path.join(BASE, "收书箱")
 WWW = os.path.join(BASE, "www")
+
+# 检查更新：GitHub Releases（手动触发，平时不联网）
+APP_VERSION = "2.5"
+RELEASES_API = "https://api.github.com/repos/wacaoniu/MoYue/releases/latest"
 os.makedirs(BOOKS, exist_ok=True)
 os.makedirs(INBOX, exist_ok=True)
 
@@ -87,6 +92,17 @@ def img_size(data):
 def natural_key(s):
     return [(0, int(t)) if t.isdigit() else (1, t.lower())
             for t in re.split(r"(\d+)", s) if t]
+
+
+def version_newer(latest, current):
+    """版本号逐段数字比较："2.5" > "2.4"，相等返回 False"""
+    def segs(v):
+        return [int(t) for t in re.findall(r"\d+", str(v))]
+    a, b = segs(latest), segs(current)
+    n = max(len(a), len(b))
+    a += [0] * (n - len(a))
+    b += [0] * (n - len(b))
+    return a > b
 
 
 def detect_series(title):
@@ -731,6 +747,27 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/books":
                 scan_inbox()
                 return self._json(load_books())
+            if u.path == "/api/update":
+                # 检查更新（手动触发）：后端代理 GitHub API，前端不直连外网
+                try:
+                    req = urllib.request.Request(RELEASES_API, headers={"User-Agent": "MoYue-Desktop"})
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        rel = json.loads(resp.read().decode("utf-8"))
+                    tag = (rel.get("tag_name") or "").strip()
+                    latest = tag.lstrip("vV")
+                    zip_asset = next(
+                        (a for a in rel.get("assets", [])
+                         if str(a.get("name", "")).lower().endswith(".zip")), None)
+                    return self._json({
+                        "current": APP_VERSION,
+                        "latest": latest,
+                        "hasUpdate": bool(tag) and version_newer(latest, APP_VERSION),
+                        "notes": (rel.get("body") or "").strip(),
+                        "pageUrl": rel.get("html_url") or "https://github.com/wacaoniu/MoYue/releases/latest",
+                        "zipUrl": (zip_asset or {}).get("browser_download_url"),
+                    })
+                except Exception as e:
+                    return self._json({"error": f"检查更新失败：{e}"})
             if u.path == "/api/book":
                 meta = json.load(open(os.path.join(BOOKS, q["id"][0], "meta.json"), encoding="utf-8"))
                 return self._json(meta)

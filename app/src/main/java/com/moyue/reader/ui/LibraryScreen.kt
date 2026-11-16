@@ -29,8 +29,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -126,6 +129,12 @@ fun LibraryScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var groupMenuFor by remember { mutableStateOf<String?>(null) }
     var renameFor by remember { mutableStateOf<String?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showUpdate by remember { mutableStateOf(false) }
+
+    if (showUpdate) {
+        UpdateDialog(onDismiss = { showUpdate = false })
+    }
 
     if (importErrors.isNotEmpty()) {
         AlertDialog(
@@ -239,6 +248,15 @@ fun LibraryScreen(
                     actions = {
                         IconButton(onClick = { picker.launch(epubMimes) }) {
                             Icon(Icons.Filled.Add, contentDescription = "导入 EPUB")
+                        }
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("检查更新") },
+                                onClick = { menuOpen = false; showUpdate = true },
+                            )
                         }
                     },
                 )

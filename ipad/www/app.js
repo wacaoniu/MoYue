@@ -12,6 +12,9 @@ const { STORE_BOOKS, STORE_COVERS } = MoYue;
 const $ = id => document.getElementById(id);
 const stage = () => $('stage');
 
+const APP_VERSION = '2.5';   // 与 GitHub Release tag 同步（v2.5）
+const RELEASES_API = 'https://api.github.com/repos/wacaoniu/MoYue/releases/latest';
+
 const THEMES = [["#FDFDFB", "#1B1D22"], ["#F6EFDD", "#57493A"], ["#CCE6CF", "#2C3A2E"], ["#101014", "#B8BCC6"]];
 let themeIdx = +(localStorage.moyue_theme || 0), fontPct = +(localStorage.moyue_font || 100), zoomPct = 100;
 let meta = null, rec = null, zip = null;       // rec: {id, meta, src(Blob), inlineDocs}
@@ -275,6 +278,36 @@ $('selCancel').onclick = exitSelection;
 $('selGroup').onclick = selGroup;
 $('selRemove').onclick = () => { setSeries([...selected], null); exitSelection(); };
 $('selDelete').onclick = selDelete;
+
+/* ══════════ 检查更新（手动触发，直连 GitHub API） ══════════ */
+function versionNewer(a, b) {
+  const seg = v => (String(v).match(/\d+/g) || []).map(Number);
+  const x = seg(a), y = seg(b);
+  const n = Math.max(x.length, y.length);
+  for (let i = 0; i < n; i++) {
+    const p = x[i] || 0, q = y[i] || 0;
+    if (p !== q) return p > q;
+  }
+  return false;
+}
+async function checkUpdate() {
+  const btn = $('btnUpdate'); btn.disabled = true; btn.textContent = '检查中…';
+  try {
+    const r = await (await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } })).json();
+    const tag = (r.tag_name || '').trim();
+    if (!tag) throw new Error('发布信息异常');
+    const latest = tag.replace(/^v/i, '');
+    if (versionNewer(latest, APP_VERSION)) {
+      toast(`发现新版本 v${latest}（当前 v${APP_VERSION}）`);
+      if (confirm(`发现新版本 v${latest}（当前 v${APP_VERSION}）\n\n去发布页查看？\n（iPad 版按发布页说明重新安装即可更新）`))
+        window.open(r.html_url, '_blank');
+    } else {
+      toast(`已是最新版本 v${APP_VERSION} ✓`);
+    }
+  } catch (e) { toast('检查更新失败：' + (e && e.message || e)); }
+  btn.disabled = false; btn.textContent = '检查更新';
+}
+$('btnUpdate').onclick = checkUpdate;
 
 /* ══════════ 打开书 ══════════ */
 function spineIdxMap() {
