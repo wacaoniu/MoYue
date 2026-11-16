@@ -5,7 +5,7 @@
 'use strict';
 importScripts('moyue-core.js');
 
-const VERSION = 'moyue-ipad-v7';
+const VERSION = 'moyue-ipad-v8';
 const BASE = new URL('./', self.registration.scope).href;
 const SHELL = [
   './', './index.html', './app.js', './moyue-core.js', './manifest.webmanifest',
