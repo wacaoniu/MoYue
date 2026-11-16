@@ -37,6 +37,23 @@ button{font-family:inherit;cursor:pointer}
 #drop{position:fixed;inset:0;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;
   justify-content:center;font-size:24px;z-index:99;border:4px dashed #fff}
 
+/* ── 系列分组卡片 + 多选 ── */
+.card.series .cover{position:relative}
+.card.series .cover img{position:relative;z-index:1}
+.card.series .stack{position:absolute;inset:0;border-radius:8px;background:#fff;
+  border:1px solid var(--uiborder);transform:translate(5px,5px)}   /* 叠层封面效果 */
+.card.series .vols{position:absolute;right:6px;bottom:6px;z-index:2;background:rgba(0,0,0,.65);color:#fff;
+  border-radius:10px;padding:3px 9px;font-size:11px}
+.card.selmode{position:relative}
+.card.selmode::before{content:'✓';position:absolute;top:16px;right:16px;z-index:5;width:22px;height:22px;
+  border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.25);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:13px}
+.card.picked{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.card.picked::before{background:var(--accent)}
+#selbar{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;background:#fff;
+  border:1px solid var(--uiborder);border-radius:12px;padding:10px 14px;display:flex;align-items:center;
+  gap:10px;font-size:14px;z-index:70;box-shadow:0 8px 24px rgba(0,0,0,.15)}
+
 /* ── 阅读器 ── */
 #reader{height:100vh;display:flex;flex-direction:column;background:var(--rbg)}
 #toolbar{background:var(--ui);border-bottom:1px solid var(--uiborder);padding:8px 16px;
@@ -110,8 +127,9 @@ button{font-family:inherit;cursor:pointer}
 <!-- ══ 书架 ══ -->
 <div id="library">
   <div id="libHead">
-    <h1>墨阅 · 电脑版</h1>
-    <span style="opacity:.45;font-size:12px">EPUB / PDF / TXT / CBZ</span>
+    <button class="tbtn hidden" id="btnSeriesBack">← 书架</button>
+    <h1 id="libTitle">墨阅 · 电脑版</h1>
+    <span id="libFmt" style="opacity:.45;font-size:12px">EPUB / PDF / TXT / CBZ</span>
     <span class="sp"></span>
     <button class="btn primary" onclick="document.getElementById('file').click()">导入图书</button>
   </div>
@@ -121,6 +139,13 @@ button{font-family:inherit;cursor:pointer}
   <input type="file" id="file" multiple accept=".epub,.pdf,.txt,.cbz" style="display:none">
 </div>
 <div id="drop" class="hidden">松手导入</div>
+<div id="selbar" class="hidden">
+  <span id="selCount">已选 0 本</span>
+  <button class="tbtn" id="selGroup">分组</button>
+  <button class="tbtn" id="selRemove">移出分组</button>
+  <button class="tbtn" id="selDelete">删除</button>
+  <button class="tbtn" id="selCancel">取消</button>
+</div>
 
 <!-- ══ 阅读器 ══ -->
 <div id="reader" class="hidden">
@@ -196,23 +221,165 @@ const $=id=>document.getElementById(id);
 
 function toast(msg){const t=$('toast');t.textContent=msg;t.style.opacity=1;setTimeout(()=>t.style.opacity=0,1800);}
 
-/* ── 书架 ── */
+/* ── 书架（单本 + 系列分组混排，长按/右键进入多选） ── */
+let curSeries=null;                 // 系列视图：当前分组名（null = 书架根视图）
+let selecting=false, selected=new Set();
+let libBooks=new Map();             // 渲染时记录 id -> meta，供多选操作查询
+
+function naturalCmp(a,b){ // 自然排序：p2 < p10
+  const A=String(a).split(/(\d+)/),B=String(b).split(/(\d+)/);
+  for(let i=0;i<Math.max(A.length,B.length);i++){
+    const x=A[i],y=B[i];
+    if(x===undefined||x===''){ if(y===undefined||y==='')return 0; return -1; }
+    if(y===undefined||y==='')return 1;
+    if(i%2===1){ const d=(+x)-(+y); if(d)return d; }
+    else{ const lx=x.toLowerCase(),ly=y.toLowerCase(); if(lx<ly)return -1; if(lx>ly)return 1; }
+  }
+  return 0;
+}
+
 async function loadLib(){
   const books=await (await fetch('/api/books')).json();
+  exitSelection();
+  libBooks=new Map(books.map(b=>[b.id,b]));
   const g=$('grid'); g.innerHTML='';
+  if(curSeries!=null) return loadSeriesView(books);
+  // 根视图：无分组的单本 + 系列组，按活跃时间混排
+  $('libTitle').textContent='墨阅 · 电脑版';
+  $('btnSeriesBack').classList.add('hidden');
+  $('libFmt').style.display='';
   $('empty').classList.toggle('hidden', books.length>0);
+  const entries=[], groups=new Map();
   for(const b of books){
-    const pct=b.spine&&b.spine.length? Math.min(100,Math.round(((b.i||0)+(b.r||0))/b.spine.length*100)):0;
-    const d=document.createElement('div'); d.className='card';
-    const cov=b.cover?`<img src="/b/${b.id}/f/${b.cover}">`:escapeHtml(b.title[0]||'书');
-    const modeName={epub:b.mode==='comic'?'漫画':'EPUB',pdf:'PDF',txt:'TXT',cbz:'CBZ'}[b.format]||b.format;
-    d.innerHTML=`<div class="cover">${cov}</div><div class="t">${escapeHtml(b.title)}</div>
-      <div class="a">${escapeHtml(b.author||'')} · ${modeName}</div>
-      <div class="pbar"><i style="width:${pct}%"></i></div><div class="p">${pct}%${pct>0?' 已读':''}</div>`;
-    d.onclick=()=>openBook(b.id);
-    g.appendChild(d);
+    if(b.series){ if(!groups.has(b.series))groups.set(b.series,[]); groups.get(b.series).push(b); }
+    else entries.push({kind:'book',b,ts:b.lastReadAt||b.addedAt||0});
   }
+  for(const [name,vols] of groups){
+    vols.sort((x,y)=>naturalCmp(x.title,y.title));
+    entries.push({kind:'series',name,vols,ts:Math.max(...vols.map(v=>v.lastReadAt||v.addedAt||0))});
+  }
+  entries.sort((x,y)=>y.ts-x.ts);
+  for(const e of entries){ if(e.kind==='book')renderBookCard(e.b,g); else renderSeriesCard(e.name,e.vols,g); }
 }
+function loadSeriesView(books){
+  const vols=books.filter(b=>b.series===curSeries).sort((x,y)=>naturalCmp(x.title,y.title));
+  if(!vols.length){ curSeries=null; return loadLib(); }   // 组已空，退回根视图
+  $('libTitle').textContent=curSeries;
+  $('btnSeriesBack').classList.remove('hidden');
+  $('libFmt').style.display='none';
+  $('empty').classList.add('hidden');
+  const g=$('grid');
+  for(const b of vols)renderBookCard(b,g);
+}
+function openSeries(name){ curSeries=name; loadLib(); }
+function closeSeries(){ curSeries=null; loadLib(); }
+
+function renderBookCard(b,g){
+  const pct=b.spine&&b.spine.length? Math.min(100,Math.round(((b.i||0)+(b.r||0))/b.spine.length*100)):0;
+  const d=document.createElement('div'); d.className='card'; d.dataset.id=b.id;
+  const cov=b.cover?`<img src="/b/${b.id}/f/${b.cover}">`:escapeHtml(b.title[0]||'书');
+  const modeName={epub:b.mode==='comic'?'漫画':'EPUB',pdf:'PDF',txt:'TXT',cbz:'CBZ'}[b.format]||b.format;
+  d.innerHTML=`<div class="cover">${cov}</div><div class="t">${escapeHtml(b.title)}</div>
+    <div class="a">${escapeHtml(b.author||'')} · ${modeName}</div>
+    <div class="pbar"><i style="width:${pct}%"></i></div><div class="p">${pct}%${pct>0?' 已读':''}</div>`;
+  d.onclick=()=>{ if(selecting)toggleSelect(b.id); else openBook(b.id); };
+  bindLongPress(d,()=>enterSelection(b.id));
+  g.appendChild(d);
+}
+function renderSeriesCard(name,vols,g){
+  const first=vols[0];
+  const pct=Math.round(vols.reduce((s,v)=>{
+    return s+(v.spine&&v.spine.length?Math.min(100,((v.i||0)+(v.r||0))/v.spine.length*100):0);
+  },0)/vols.length);
+  const d=document.createElement('div'); d.className='card series'; d.dataset.series=name;
+  const cov=first.cover?`<img src="/b/${first.id}/f/${first.cover}">`:escapeHtml(name[0]||'书');
+  d.innerHTML=`<div class="cover"><span class="stack"></span>${cov}<span class="vols">${vols.length} 卷</span></div>
+    <div class="t">${escapeHtml(name)}</div>
+    <div class="a">${escapeHtml(first.author||'')}</div>
+    <div class="pbar"><i style="width:${pct}%"></i></div><div class="p">${pct}% · 平均</div>`;
+  d.onclick=()=>{ if(!selecting)openSeries(name); };
+  bindLongPress(d,()=>seriesCardMenu(name));
+  g.appendChild(d);
+}
+function seriesCardMenu(name){
+  const v=prompt(`重命名分组「${name}」：\n（留空并确定 = 解散分组）`,name);
+  if(v===null)return;
+  const nv=v.trim();
+  if(nv&&nv!==name)renameSeries(name,nv);
+  else if(!nv&&confirm(`解散分组「${name}」？\n各卷将回到书架单独显示`))dissolveSeries(name);
+}
+
+/* ── 多选 ── */
+function enterSelection(id){ selecting=true; selected=new Set([id]); refreshSelectionUi(); }
+function toggleSelect(id){
+  if(selected.has(id))selected.delete(id); else selected.add(id);
+  if(!selected.size)selecting=false;
+  refreshSelectionUi();
+}
+function exitSelection(){ selecting=false; selected=new Set(); refreshSelectionUi(); }
+function refreshSelectionUi(){
+  document.querySelectorAll('#grid .card').forEach(c=>{
+    const id=c.dataset.id;
+    c.classList.toggle('selmode',selecting);
+    c.classList.toggle('picked',selecting&&id!=null&&selected.has(id));
+  });
+  $('selbar').classList.toggle('hidden',!selecting);
+  $('selCount').textContent=`已选 ${selected.size} 本`;
+  const anySeries=[...selected].some(id=>libBooks.get(id)&&libBooks.get(id).series);
+  $('selRemove').style.display=anySeries?'':'none';
+}
+function selGroup(){
+  const names=[...new Set([...libBooks.values()].map(b=>b.series).filter(Boolean))];
+  const v=prompt('移入分组：输入分组名\n'+(names.length?'已有分组：'+names.join('、'):'（暂无分组）'),'');
+  if(v&&v.trim()){ setSeries([...selected],v.trim()); exitSelection(); }
+}
+async function selDelete(){
+  if(!selected.size)return;
+  if(!confirm(`删除所选 ${selected.size} 本书？\n阅读进度一并删除`))return;
+  await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ids:[...selected]})});
+  exitSelection(); loadLib();
+}
+
+/* ── 分组数据操作（走后端） ── */
+async function setSeries(ids,series){
+  await fetch('/api/series',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ids,series:series||null})});
+  loadLib();
+}
+async function renameSeries(oldName,newName){
+  const books=await (await fetch('/api/books')).json();
+  const ids=books.filter(b=>b.series===oldName).map(b=>b.id);
+  await setSeries(ids,newName);
+  if(curSeries===oldName)curSeries=newName;
+  loadLib();
+}
+async function dissolveSeries(name){
+  const books=await (await fetch('/api/books')).json();
+  const ids=books.filter(b=>b.series===name).map(b=>b.id);
+  await setSeries(ids,null);
+  if(curSeries===name)curSeries=null;
+  loadLib();
+}
+
+/* 长按/右键（鼠标右键 / 触屏长按） */
+function bindLongPress(el,fn){
+  let timer=null;
+  el.addEventListener('contextmenu',e=>{ e.preventDefault(); if(!selecting)fn(); });
+  el.addEventListener('pointerdown',()=>{
+    timer=setTimeout(()=>{ timer=null; if(!selecting)fn(); },550);
+  });
+  const cancel=()=>{ if(timer){ clearTimeout(timer); timer=null; } };
+  el.addEventListener('pointerup',cancel);
+  el.addEventListener('pointercancel',cancel);
+  el.addEventListener('pointermove',cancel);
+  el.addEventListener('pointerleave',cancel);
+}
+$('btnSeriesBack').onclick=closeSeries;
+$('selCancel').onclick=exitSelection;
+$('selGroup').onclick=selGroup;
+$('selRemove').onclick=()=>{ setSeries([...selected],null); exitSelection(); };
+$('selDelete').onclick=selDelete;
 function escapeHtml(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 async function uploadFiles(files){

@@ -89,6 +89,28 @@ def natural_key(s):
             for t in re.split(r"(\d+)", s) if t]
 
 
+def detect_series(title):
+    """从书名提取系列名（“海贼王 第03卷”→“海贼王”），命中才返回；与 Android/iPad 版同规则。
+    保守策略：系列名至少 2 字符且含非数字，避免把《1984》这类书名误拆。"""
+    t = (title or "").strip()
+    if not t:
+        return None
+    cn = "0-9〇零一二三四五六七八九十百千万两"
+    pats = [
+        rf"^(.{{2,}}?)[\s　._·\-]*(?:[（(\[【]\s*)?第\s*[{cn}]{{1,8}}\s*[卷册部集][\s　]?(?:[）)\]】])?$",
+        r"^(.{2,}?)[\s　._·\-]*(?:[（(\[【]\s*)?(?:vol\.?|volume|v)\s*\d{1,4}(?:[）)\]】])?$",
+        r"^(.{2,}?)[\s　._·\-]*(?:[（(\[【]\s*)?\d{1,4}(?:[）)\]】])?$",
+    ]
+    for p in pats:
+        m = re.match(p, t, re.IGNORECASE)
+        if not m:
+            continue
+        name = m.group(1).strip("　 ._-·")
+        if len(name) >= 2 and any(not c.isdigit() for c in name):
+            return name
+    return None
+
+
 def smart_decode(data):
     """按头部声明/内容探测解码：UTF-8 优先，GB 系自动回退（老书兼容）"""
     head = data[:1024].decode("ascii", "replace").lower()
@@ -442,6 +464,7 @@ def import_book_bytes(data, name):
         shutil.rmtree(bdir, ignore_errors=True)
         raise
     meta = {**info, "id": bid, "i": 0, "r": 0.0, "spread": 0, "merge": 0, "seam": 1, "page": -1,
+            "series": detect_series(info.get("title", "")),
             "addedAt": int(time.time() * 1000), "lastReadAt": 0}
     save_meta(meta)
     return meta
@@ -749,6 +772,27 @@ class Handler(BaseHTTPRequestHandler):
                     meta = restore_epub_orig(meta)
                 meta["lastReadAt"] = int(time.time() * 1000)
                 save_meta(meta)
+                return self._json({"ok": True})
+            if u.path == "/api/series":
+                # 批量设置/移除系列分组：{ids: [...], series: "组名"|null}
+                d = json.loads(body.decode("utf-8"))
+                series = (d.get("series") or "").strip() or None
+                for bid in d.get("ids", []):
+                    p = os.path.join(BOOKS, bid, "meta.json")
+                    meta = json.load(open(p, encoding="utf-8"))
+                    if series:
+                        meta["series"] = series
+                    else:
+                        meta.pop("series", None)
+                    save_meta(meta)
+                return self._json({"ok": True})
+            if u.path == "/api/delete":
+                d = json.loads(body.decode("utf-8"))
+                for bid in d.get("ids", []):
+                    bdir = os.path.realpath(os.path.join(BOOKS, bid))
+                    if bdir.startswith(os.path.realpath(BOOKS) + os.sep) and os.path.isdir(bdir):
+                        import shutil
+                        shutil.rmtree(bdir, ignore_errors=True)
                 return self._json({"ok": True})
             self._json({"error": "not found"}, 404)
         except Exception as e:

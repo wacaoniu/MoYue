@@ -55,6 +55,29 @@ object ImportSupport {
         return n.substringBeforeLast('.').trim().ifEmpty { "未命名" }
     }
 
+    // ── 系列识别（导入时按书名识别“同一部漫画的第 N 卷”）──
+
+    /** 中文数字（第N卷 支持） */
+    private const val CN_NUM = "0-9〇零一二三四五六七八九十百千万两"
+
+    private val RE_VOL_CN = Regex("^(.{2,}?)[\\s　._·\\-]*(?:[（(\\[【]\\s*)?第\\s*[$CN_NUM]{1,8}\\s*[卷册部集][\\s　]?(?:[）)\\]】])?$")
+    private val RE_VOL_EN = Regex("^(.{2,}?)[\\s　._·\\-]*(?:[（(\\[【]\\s*)?(?:vol\\.?|volume|v)\\s*(\\d{1,4})(?:[）)\\]】])?$", RegexOption.IGNORE_CASE)
+    private val RE_TAIL_NUM = Regex("^(.{2,}?)[\\s　._·\\-]*(?:[（(\\[【]\\s*)?(\\d{1,4})(?:[）)\\]】])?$")
+
+    /**
+     * 从书名提取系列名，命中才返回（用于把“海贼王 第03卷”这类分卷书自动归入“海贼王”系列）。
+     * 保守策略：系列名至少 2 个字符且不能全是数字/空白，避免把《1984》这类书名误拆。
+     */
+    fun detectSeries(title: String): String? {
+        val t = title.trim()
+        if (t.isEmpty()) return null
+        for (re in listOf(RE_VOL_CN, RE_VOL_EN, RE_TAIL_NUM)) {
+            val name = re.find(t)?.groupValues?.get(1)?.trim('　', ' ', '.', '_', '-', '·') ?: continue
+            if (name.length >= 2 && name.any { !it.isDigit() }) return name
+        }
+        return null
+    }
+
     // ── PDF ────────────────────────────────────────────────
 
     fun buildPdf(dir: File, tmpFile: File, title: String): BuiltBook {
@@ -78,24 +101,7 @@ object ImportSupport {
             }
         }
         if (imgs.isEmpty()) throw IllegalArgumentException("压缩包里没有图片，不是有效的 CBZ 漫画")
-        val natComp = Comparator<String> { a, b ->
-            val ka = naturalKey(a)
-            val kb = naturalKey(b)
-            val n = minOf(ka.size, kb.size)
-            for (i in 0 until n) {
-                val x = ka[i]
-                val y = kb[i]
-                val c = when {
-                    x is Int && y is Int -> x.compareTo(y)
-                    x is String && y is String -> x.compareTo(y)
-                    x is Int -> -1
-                    else -> 1
-                }
-                if (c != 0) return@Comparator c
-            }
-            ka.size - kb.size
-        }
-        imgs.sortWith { a, b -> natComp.compare(a.first, b.first) }
+        imgs.sortWith { a, b -> naturalOrder.compare(a.first, b.first) }
         val pages = imgs.map { (path, size) ->
             if (size != null) PageInfo(path, size.first, size.second)
             else PageInfo(path, 3, 4) // 读不出尺寸时用兜底比例，加载后自然校正
@@ -117,6 +123,25 @@ object ImportSupport {
                 out.outputStream().use { fos -> ins.copyTo(fos) }
             }
         }
+    }
+
+    /** 自然排序比较器：a2 < a10（系列内按卷号排序、CBZ 图片排序共用） */
+    val naturalOrder: Comparator<String> = Comparator { a, b ->
+        val ka = naturalKey(a)
+        val kb = naturalKey(b)
+        val n = minOf(ka.size, kb.size)
+        for (i in 0 until n) {
+            val x = ka[i]
+            val y = kb[i]
+            val c = when {
+                x is Int && y is Int -> x.compareTo(y)
+                x is String && y is String -> x.compareTo(y)
+                x is Int -> -1
+                else -> 1
+            }
+            if (c != 0) return@Comparator c
+        }
+        ka.size - kb.size
     }
 
     /** 自然排序键：a2 < a10 */

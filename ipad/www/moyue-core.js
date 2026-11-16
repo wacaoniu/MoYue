@@ -52,6 +52,24 @@ const MoYue = (() => {
     return 0;
   }
 
+  /* 系列名识别：把“海贼王 第03卷”这类分卷书名拆出系列名，命中才返回（与 Android 版同规则） */
+  function detectSeries(title) {
+    const t = String(title || '').trim();
+    if (!t) return null;
+    const CN = '0-9〇零一二三四五六七八九十百千万两';
+    const res = [
+      new RegExp(`^(.{2,}?)[\\s　._·\\-]*(?:[（(\\[【]\\s*)?第\\s*[${CN}]{1,8}\\s*[卷册部集][\\s　]?(?:[）)\\]】])?$`),
+      /^(.{2,}?)[\s　._·\-]*(?:[（(\[【]\s*)?(?:vol\.?|volume|v)\s*\d{1,4}(?:[）)\]】])?$/i,
+      /^(.{2,}?)[\s　._·\-]*(?:[（(\[【]\s*)?\d{1,4}(?:[）)\]】])?$/,
+    ];
+    for (const re of res) {
+      const name = (t.match(re) || [])[1] || '';
+      const n = name.trim().replace(/^[　 . _\-·]+|[　 . _\-·]+$/g, '');
+      if (n.length >= 2 && /\D/.test(n)) return n;
+    }
+    return null;
+  }
+
   /* 按头部声明/内容探测解码：UTF-8 优先，GB 系自动回退（老书兼容） */
   function smartDecode(bytes) {
     if (!bytes) return '';
@@ -608,7 +626,7 @@ const MoYue = (() => {
   return {
     ZipReader, importBook, importTxt, detectFormat, chapterImages, comicNodes,
     ensureEpubFlat, restoreEpubOrig,
-    imgSize, naturalCmp, normRel, smartDecode, escapeHtml, readText, mimeOf,
+    imgSize, naturalCmp, detectSeries, normRel, smartDecode, escapeHtml, readText, mimeOf,
     virtualUrl: (bookId, rel) => `z/${bookId}/${encodeURIComponent(rel)}`, // 相对路径，由 sw.js 拦截读取
     randId, HAS_DEFLATE,
     DB_NAME, STORE_BOOKS, STORE_COVERS, idbOpen, idbGet, idbPut, idbDel, idbAll,

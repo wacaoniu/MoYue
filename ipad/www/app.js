@@ -44,53 +44,178 @@ async function resUrl(rel) {
 }
 function revokeEager() { for (const u of eagerUrls.values()) URL.revokeObjectURL(u); eagerUrls.clear(); }
 
-/* ══════════ 书架 ══════════ */
+/* ══════════ 书架（单本 + 系列分组混排，长按进入多选） ══════════ */
+let curSeries = null;                 // 系列视图：当前分组名（null = 书架根视图）
+let selecting = false, selected = new Set();
+let libBooks = new Map();             // 渲染时记录 id -> meta，供多选操作查询
+
 async function loadLib() {
   const recs = (await MoYue.idbAll(STORE_BOOKS)) || [];
   recs.sort((a, b) => ((b.meta.lastReadAt || b.meta.addedAt || 0) - (a.meta.lastReadAt || a.meta.addedAt || 0)));
   for (const u of coverUrls) URL.revokeObjectURL(u);
   coverUrls = [];
+  exitSelection();
+  libBooks = new Map(recs.map(r => [r.id, r.meta]));
   const g = $('grid'); g.innerHTML = '';
+  if (curSeries != null) return loadSeriesView(recs);
+  // 根视图：无分组的单本 + 系列组，按活跃时间混排
+  $('libTitle').textContent = '墨阅';
+  $('btnSeriesBack').classList.add('hidden');
+  document.querySelector('#libHead .fmt').style.display = '';
   $('empty').classList.toggle('hidden', recs.length > 0);
+  const entries = [];
+  const groups = new Map();
   for (const r of recs) {
-    const b = r.meta;
-    const pct = b.spine && b.spine.length ? Math.min(100, Math.round(((b.i || 0) + (b.r || 0)) / b.spine.length * 100)) : 0;
-    const d = document.createElement('div'); d.className = 'card';
-    const modeName = { epub: b.mode === 'comic' ? '漫画' : 'EPUB', pdf: 'PDF', txt: 'TXT', cbz: 'CBZ' }[b.format] || b.format;
-    let covHtml = MoYue.escapeHtml((b.title || '书')[0]);
-    try {
-      const cov = await MoYue.idbGet(STORE_COVERS, b.id);
-      if (cov) { const u = URL.createObjectURL(cov); coverUrls.push(u); covHtml = `<img src="${u}" alt="">`; }
-    } catch (e) {}
-    d.innerHTML = `<div class="cover">${covHtml}</div><div class="t">${MoYue.escapeHtml(b.title)}</div>
-      <div class="a">${MoYue.escapeHtml(b.author || '')} · ${modeName}</div>
-      <div class="pbar"><i style="width:${pct}%"></i></div><div class="p">${pct}%${pct > 0 ? ' 已读' : ''}</div>`;
-    d.onclick = () => openBook(b.id);
-    bindDelete(d, b);
-    g.appendChild(d);
+    if (r.meta.series) {
+      if (!groups.has(r.meta.series)) groups.set(r.meta.series, []);
+      groups.get(r.meta.series).push(r);
+    } else entries.push({ kind: 'book', r, ts: r.meta.lastReadAt || r.meta.addedAt || 0 });
+  }
+  for (const [name, vols] of groups) {
+    vols.sort((a, b) => MoYue.naturalCmp(a.meta.title, b.meta.title));
+    entries.push({ kind: 'series', name, vols, ts: Math.max(...vols.map(r => r.meta.lastReadAt || r.meta.addedAt || 0)) });
+  }
+  entries.sort((a, b) => b.ts - a.ts);
+  for (const e of entries) {
+    if (e.kind === 'book') await renderBookCard(e.r, g);
+    else renderSeriesCard(e.name, e.vols, g);
   }
 }
-function bindDelete(card, b) {
+
+async function loadSeriesView(recs) {
+  const vols = recs.filter(r => r.meta.series === curSeries)
+    .sort((a, b) => MoYue.naturalCmp(a.meta.title, b.meta.title));
+  if (!vols.length) { curSeries = null; return loadLib(); }   // 组已空，退回根视图
+  $('libTitle').textContent = curSeries;
+  $('btnSeriesBack').classList.remove('hidden');
+  document.querySelector('#libHead .fmt').style.display = 'none';
+  $('empty').classList.add('hidden');
+  const g = $('grid');
+  for (const r of vols) await renderBookCard(r, g);
+}
+function openSeries(name) { curSeries = name; loadLib(); }
+function closeSeries() { curSeries = null; loadLib(); }
+
+async function renderBookCard(r, g) {
+  const b = r.meta;
+  const pct = b.spine && b.spine.length ? Math.min(100, Math.round(((b.i || 0) + (b.r || 0)) / b.spine.length * 100)) : 0;
+  const d = document.createElement('div'); d.className = 'card'; d.dataset.id = b.id;
+  const modeName = { epub: b.mode === 'comic' ? '漫画' : 'EPUB', pdf: 'PDF', txt: 'TXT', cbz: 'CBZ' }[b.format] || b.format;
+  let covHtml = MoYue.escapeHtml((b.title || '书')[0]);
+  try {
+    const cov = await MoYue.idbGet(STORE_COVERS, b.id);
+    if (cov) { const u = URL.createObjectURL(cov); coverUrls.push(u); covHtml = `<img src="${u}" alt="">`; }
+  } catch (e) {}
+  d.innerHTML = `<div class="cover">${covHtml}</div><div class="t">${MoYue.escapeHtml(b.title)}</div>
+    <div class="a">${MoYue.escapeHtml(b.author || '')} · ${modeName}</div>
+    <div class="pbar"><i style="width:${pct}%"></i></div><div class="p">${pct}%${pct > 0 ? ' 已读' : ''}</div>`;
+  d.onclick = () => { if (selecting) toggleSelect(b.id); else openBook(b.id); };
+  bindLongPress(d, () => enterSelection(b.id));
+  g.appendChild(d);
+}
+
+function renderSeriesCard(name, vols, g) {
+  const first = vols[0];
+  const pct = Math.round(vols.reduce((s, r) => {
+    const b = r.meta;
+    return s + (b.spine && b.spine.length ? Math.min(100, ((b.i || 0) + (b.r || 0)) / b.spine.length * 100) : 0);
+  }, 0) / vols.length);
+  const d = document.createElement('div'); d.className = 'card series'; d.dataset.series = name;
+  const a = first.meta.author || '';
+  d.innerHTML = `<div class="cover"><span class="stack"></span><span class="vols">${vols.length} 卷</span></div>
+    <div class="t">${MoYue.escapeHtml(name)}</div>
+    <div class="a">${MoYue.escapeHtml(a)}</div>
+    <div class="pbar"><i style="width:${pct}%"></i></div><div class="p">${pct}% · 平均</div>`;
+  loadSeriesCover(d, first);
+  d.onclick = () => { if (!selecting) openSeries(name); };
+  bindLongPress(d, () => seriesCardMenu(name));
+  g.appendChild(d);
+}
+async function loadSeriesCover(card, first) {
+  try {
+    const cov = await MoYue.idbGet(STORE_COVERS, first.id);
+    if (!cov) return;
+    const u = URL.createObjectURL(cov); coverUrls.push(u);
+    const holder = card.querySelector('.cover');
+    if (holder) holder.insertAdjacentHTML('afterbegin', `<img src="${u}" alt="">`);
+  } catch (e) {}
+}
+
+function seriesCardMenu(name) {
+  const v = prompt(`重命名分组「${name}」：\n（留空并确定 = 解散分组）`, name);
+  if (v === null) return;
+  const nv = v.trim();
+  if (nv && nv !== name) renameSeries(name, nv);
+  else if (!nv && confirm(`解散分组「${name}」？\n各卷将回到书架单独显示`)) dissolveSeries(name);
+}
+
+/* ── 多选 ── */
+function enterSelection(id) { selecting = true; selected = new Set([id]); refreshSelectionUi(); }
+function toggleSelect(id) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  if (!selected.size) selecting = false;
+  refreshSelectionUi();
+}
+function exitSelection() { selecting = false; selected = new Set(); refreshSelectionUi(); }
+function refreshSelectionUi() {
+  document.querySelectorAll('#grid .card').forEach(c => {
+    const id = c.dataset.id;
+    c.classList.toggle('selmode', selecting);
+    c.classList.toggle('picked', selecting && id != null && selected.has(id));
+  });
+  $('selbar').classList.toggle('hidden', !selecting);
+  $('selCount').textContent = `已选 ${selected.size} 本`;
+  const anySeries = [...selected].some(id => libBooks.get(id) && libBooks.get(id).series);
+  $('selRemove').style.display = anySeries ? '' : 'none';
+}
+async function selGroup() {
+  const names = [...new Set([...libBooks.values()].map(m => m.series).filter(Boolean))];
+  const v = prompt('移入分组：输入分组名\n' + (names.length ? '已有分组：' + names.join('、') : '（暂无分组）'), '');
+  if (v && v.trim()) { setSeries([...selected], v.trim()); exitSelection(); }
+}
+async function selDelete() {
+  if (!selected.size) return;
+  if (!confirm(`删除所选 ${selected.size} 本书？\n（不影响你「文件」App 里的原书，阅读进度一并删除）`)) return;
+  for (const id of selected) { await MoYue.idbDel(STORE_BOOKS, id); await MoYue.idbDel(STORE_COVERS, id); }
+  if (meta && selected.has(meta.id)) { meta = null; rec = null; zip = null; }
+  exitSelection(); loadLib();
+}
+
+/* ── 分组数据操作 ── */
+async function setSeries(ids, series) {
+  for (const id of ids) {
+    const r = await MoYue.idbGet(STORE_BOOKS, id);
+    if (!r) continue;
+    if (series) r.meta.series = series; else delete r.meta.series;
+    await MoYue.idbPut(STORE_BOOKS, r);
+  }
+  loadLib();
+}
+async function renameSeries(oldName, newName) {
+  const recs = (await MoYue.idbAll(STORE_BOOKS)) || [];
+  for (const r of recs) if (r.meta.series === oldName) { r.meta.series = newName; await MoYue.idbPut(STORE_BOOKS, r); }
+  if (curSeries === oldName) curSeries = newName;
+  loadLib();
+}
+async function dissolveSeries(name) {
+  const recs = (await MoYue.idbAll(STORE_BOOKS)) || [];
+  for (const r of recs) if (r.meta.series === name) { delete r.meta.series; await MoYue.idbPut(STORE_BOOKS, r); }
+  if (curSeries === name) curSeries = null;
+  loadLib();
+}
+
+/* 长按/右键（触屏 550ms / 桌面 contextmenu） */
+function bindLongPress(el, fn) {
   let timer = null;
-  const ask = e => {
-    e.preventDefault();
-    if (confirm(`删除《${b.title}》？\n（不影响你「文件」App 里的原书）`)) deleteBook(b.id);
-  };
-  card.addEventListener('contextmenu', ask);                       // 桌面右键
-  card.addEventListener('pointerdown', () => {                     // 触屏长按
-    timer = setTimeout(() => { timer = null; ask(new Event('x')); }, 550);
+  el.addEventListener('contextmenu', e => { e.preventDefault(); if (!selecting) fn(); });
+  el.addEventListener('pointerdown', () => {
+    timer = setTimeout(() => { timer = null; if (!selecting) fn(); }, 550);
   });
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  card.addEventListener('pointerup', cancel);
-  card.addEventListener('pointercancel', cancel);
-  card.addEventListener('pointermove', cancel);
-  card.addEventListener('pointerleave', cancel);
-}
-async function deleteBook(id) {
-  await MoYue.idbDel(STORE_BOOKS, id);
-  await MoYue.idbDel(STORE_COVERS, id);
-  if (meta && meta.id === id) { meta = null; rec = null; zip = null; }
-  loadLib();
+  el.addEventListener('pointerup', cancel);
+  el.addEventListener('pointercancel', cancel);
+  el.addEventListener('pointermove', cancel);
+  el.addEventListener('pointerleave', cancel);
 }
 
 async function extractCover(izip, m) {
@@ -121,6 +246,8 @@ async function uploadFiles(files) {
     try {
       const bytes = new Uint8Array(await f.arrayBuffer());
       const { m: bm, inlineDocs, zip: izip } = await importOne(bytes, f.name);
+      const series = MoYue.detectSeries(bm.title);   // 分卷书自动归组（如“海贼王 第03卷”）
+      if (series) bm.series = series;
       const cov = await extractCover(izip, bm);
       const id = bm.id;
       const r = { id, meta: bm, src: new Blob([bytes]) };
@@ -143,6 +270,11 @@ $('file').onchange = e => { uploadFiles([...e.target.files]); e.target.value = '
 document.addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.remove('hidden'); });
 document.addEventListener('dragleave', e => { if (!e.relatedTarget) $('drop').classList.add('hidden'); });
 document.addEventListener('drop', e => { e.preventDefault(); $('drop').classList.add('hidden'); uploadFiles([...e.dataTransfer.files]); });
+$('btnSeriesBack').onclick = closeSeries;
+$('selCancel').onclick = exitSelection;
+$('selGroup').onclick = selGroup;
+$('selRemove').onclick = () => { setSeries([...selected], null); exitSelection(); };
+$('selDelete').onclick = selDelete;
 
 /* ══════════ 打开书 ══════════ */
 function spineIdxMap() {

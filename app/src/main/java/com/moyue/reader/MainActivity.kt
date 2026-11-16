@@ -30,6 +30,7 @@ import com.moyue.reader.data.BookRepository
 import com.moyue.reader.reader.ComicScreen
 import com.moyue.reader.reader.ReaderScreen
 import com.moyue.reader.ui.LibraryScreen
+import com.moyue.reader.ui.SeriesScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,6 +72,7 @@ class MainActivity : ComponentActivity() {
 
 private sealed class Screen {
     data object Library : Screen()
+    data class SeriesDetail(val name: String) : Screen()
     data class Reader(val bookId: String) : Screen()
 }
 
@@ -98,6 +100,12 @@ fun MoyueApp(startUri: Uri?, onConsumedStartUri: () -> Unit) {
     var books by remember { mutableStateOf<List<BookMeta>>(emptyList()) }
     var importing by remember { mutableStateOf(false) }
     var importErrors by remember { mutableStateOf<List<String>>(emptyList()) }
+    // 退出阅读器后回到哪一页（书架 或 系列详情）
+    var readerReturnTo by remember { mutableStateOf<Screen>(Screen.Library) }
+
+    fun refreshBooks() {
+        scope.launch { books = withContext(Dispatchers.IO) { repo.loadBooks() } }
+    }
 
     // 每次进入/回到书架都扫描投放目录并刷新列表
     LaunchedEffect(screen) {
@@ -173,17 +181,78 @@ fun MoyueApp(startUri: Uri?, onConsumedStartUri: () -> Unit) {
             importing = importing,
             importErrors = importErrors,
             onDismissErrors = { importErrors = emptyList() },
-            onOpen = {
-                android.util.Log.d("Moyue", "onOpen bookId=$it")
-                screen = Screen.Reader(it)
+            onOpen = { id ->
+                android.util.Log.d("Moyue", "onOpen bookId=$id")
+                readerReturnTo = Screen.Library
+                screen = Screen.Reader(id)
             },
-            onDelete = { id ->
+            onOpenSeries = { name -> screen = Screen.SeriesDetail(name) },
+            onSetSeries = { ids, series ->
                 scope.launch {
-                    withContext(Dispatchers.IO) { repo.deleteBook(id) }
-                    books = withContext(Dispatchers.IO) { repo.loadBooks() }
+                    withContext(Dispatchers.IO) { ids.forEach { repo.saveSeries(it, series) } }
+                    refreshBooks()
+                }
+            },
+            onRenameSeries = { old, new ->
+                scope.launch {
+                    val ids = withContext(Dispatchers.IO) {
+                        repo.loadBooks().filter { it.series == old }.map { it.id }
+                    }
+                    withContext(Dispatchers.IO) { ids.forEach { repo.saveSeries(it, new) } }
+                    refreshBooks()
+                }
+            },
+            onDissolveSeries = { name ->
+                scope.launch {
+                    val ids = withContext(Dispatchers.IO) {
+                        repo.loadBooks().filter { it.series == name }.map { it.id }
+                    }
+                    withContext(Dispatchers.IO) { ids.forEach { repo.saveSeries(it, null) } }
+                    refreshBooks()
+                }
+            },
+            onDeleteBooks = { ids ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { ids.forEach { repo.deleteBook(it) } }
+                    refreshBooks()
                 }
             },
             onImport = { importUris(it) },
+        )
+
+        is Screen.SeriesDetail -> SeriesScreen(
+            seriesName = s.name,
+            books = books,
+            onOpen = { id ->
+                android.util.Log.d("Moyue", "onOpen bookId=$id")
+                readerReturnTo = s
+                screen = Screen.Reader(id)
+            },
+            onBack = { screen = Screen.Library },
+            onRenameSeries = { old, new ->
+                scope.launch {
+                    val ids = withContext(Dispatchers.IO) {
+                        repo.loadBooks().filter { it.series == old }.map { it.id }
+                    }
+                    withContext(Dispatchers.IO) { ids.forEach { repo.saveSeries(it, new) } }
+                    refreshBooks()
+                    if (screen is Screen.SeriesDetail && (screen as Screen.SeriesDetail).name == old) {
+                        screen = Screen.SeriesDetail(new)
+                    }
+                }
+            },
+            onSetSeries = { ids, series ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { ids.forEach { repo.saveSeries(it, series) } }
+                    refreshBooks()
+                }
+            },
+            onDeleteBooks = { ids ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { ids.forEach { repo.deleteBook(it) } }
+                    refreshBooks()
+                }
+            },
         )
 
         is Screen.Reader -> {
@@ -197,7 +266,7 @@ fun MoyueApp(startUri: Uri?, onConsumedStartUri: () -> Unit) {
                 scope.launch {
                     books = withContext(Dispatchers.IO) { repo.loadBooks() }
                 }
-                screen = Screen.Library
+                screen = readerReturnTo
             }
             when (comic) {
                 null -> Box(Modifier.fillMaxSize()) {

@@ -35,6 +35,8 @@ data class BookMeta(
     val seam: Int,
     /** pdf/cbz 的精确页码进度（阅读位置），-1 表示不适用/未记录 */
     val page: Int,
+    /** 所属系列名（同一部漫画的多卷归组），null 表示未分组 */
+    val series: String?,
     val addedAt: Long,
     val lastReadAt: Long,
 ) {
@@ -91,6 +93,7 @@ class BookRepository private constructor(context: Context) {
                 merge = 0,
                 seam = 1,
                 page = -1,
+                series = ImportSupport.detectSeries(built.title),
                 addedAt = System.currentTimeMillis(),
                 lastReadAt = 0L,
             )
@@ -209,6 +212,12 @@ class BookRepository private constructor(context: Context) {
         writeMeta(meta.copy(seam = seam.coerceIn(0, 2)))
     }
 
+    /** 设置/移除书的系列分组（series 传 null 表示移出分组） */
+    fun saveSeries(id: String, series: String?) {
+        val meta = getBook(id) ?: return
+        writeMeta(meta.copy(series = series?.trim()?.takeIf { it.isNotEmpty() }))
+    }
+
     /** 扫描“投放目录”（app 私有 import 目录与外部私有 Import 目录），导入后删除源文件 */
     fun importDropFolders(): Int {
         var count = 0
@@ -269,6 +278,7 @@ class BookRepository private constructor(context: Context) {
             .put("merge", meta.merge)
             .put("seam", meta.seam)
             .put("page", meta.page)
+            .put("series", meta.series ?: JSONObject.NULL)
             .put("pages", meta.pages?.let { list ->
                 JSONArray().apply { list.forEach { p -> put(JSONObject().put("src", p.src).put("w", p.w).put("h", p.h)) } }
             } ?: JSONObject.NULL)
@@ -329,6 +339,7 @@ class BookRepository private constructor(context: Context) {
                 merge = json.optInt("merge", 0),
                 seam = json.optInt("seam", 1),
                 page = json.optInt("page", -1),
+                series = json.optString("series").takeIf { it.isNotEmpty() && it != "null" },
             )
         } catch (_: Exception) {
             null

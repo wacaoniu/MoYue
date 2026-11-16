@@ -53,6 +53,23 @@ button{font-family:inherit;cursor:pointer;min-height:44px}
 #drop{position:fixed;inset:0;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;
   justify-content:center;font-size:24px;z-index:99;border:4px dashed #fff}
 
+/* 系列分组卡片 + 多选 */
+.card.series .cover{position:relative}
+.card.series .cover img{position:relative;z-index:1}
+.card.series .stack{position:absolute;inset:0;border-radius:8px;background:#fff;
+  border:1px solid var(--uiborder);transform:translate(5px,5px)}   /* 叠层封面效果 */
+.card.series .vols{position:absolute;right:6px;bottom:6px;z-index:2;background:rgba(0,0,0,.65);color:#fff;
+  border-radius:10px;padding:3px 9px;font-size:11px}
+.card.selmode{position:relative}
+.card.selmode::before{content:'✓';position:absolute;top:14px;right:14px;z-index:5;width:22px;height:22px;
+  border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.25);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.card.picked{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.card.picked::before{background:var(--accent)}
+#selbar{position:fixed;left:12px;right:12px;bottom:calc(12px + var(--sab));background:var(--ui);
+  border:1px solid var(--uiborder);border-radius:14px;padding:10px 14px;display:flex;align-items:center;
+  gap:8px;font-size:14px;z-index:70;box-shadow:0 8px 24px rgba(0,0,0,.15)}
+
 /* ── 阅读器 ── */
 #reader{height:100vh;display:flex;flex-direction:column;background:var(--rbg)}
 #toolbar{background:var(--ui);border-bottom:1px solid var(--uiborder);
@@ -135,6 +152,7 @@ body.nochrome #toolbar,body.nochrome #bottombar{display:none}
 <!-- ══ 书架 ══ -->
 <div id="library">
   <div id="libHead">
+    <button class="tbtn hidden" id="btnSeriesBack">← 书架</button>
     <h1 id="libTitle">墨阅</h1>
     <span class="fmt">EPUB / PDF / TXT / CBZ</span>
     <span class="sp"></span>
@@ -147,6 +165,14 @@ body.nochrome #toolbar,body.nochrome #bottombar{display:none}
     书会保存在本机，不上传任何服务器<br>
     <span style="font-size:12px;opacity:.8">（电脑上也可以把文件直接拖进窗口）</span>
   </div>
+</div>
+<div id="selbar" class="hidden">
+  <span id="selCount">已选 0 本</span>
+  <span class="sp"></span>
+  <button class="tbtn" id="selGroup">分组</button>
+  <button class="tbtn" id="selRemove">移出分组</button>
+  <button class="tbtn" id="selDelete">删除</button>
+  <button class="tbtn" id="selCancel">取消</button>
 </div>
 <input type="file" id="file" multiple accept=".epub,.pdf,.txt,.cbz" style="display:none">
 <div id="drop" class="hidden">松手导入</div>
