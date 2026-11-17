@@ -997,6 +997,42 @@ stage().addEventListener('dblclick', e => {
 });
 stage().addEventListener('contextmenu', e => { if (e.target.closest('img')) e.preventDefault(); }); // 禁漫画长按菜单
 
+/* ══════════ 文本模式：章底/章顶继续滑动 → 切章（抬手后执行，避免残余拖拽破坏新章恢复位置） ══════════ */
+let edgeY0 = 0, edgeB0 = false, edgeP0 = false, edgeFired = false, edgeLock = 0, edgePending = 0;
+function edgeCommit(dir) {
+  const now = Date.now();
+  if (now - edgeLock < 800) { edgePending = 0; return; }
+  edgeLock = now; edgePending = 0;
+  if (dir > 0 && curCh < meta.spine.length - 1) nextCh();
+  else if (dir < 0 && curCh > 0) prevCh();
+}
+stage().addEventListener('touchstart', e => {
+  const st = stage();
+  edgeY0 = e.touches[0].clientY;
+  edgeB0 = st.scrollTop >= st.scrollHeight - st.clientHeight - 4;
+  edgeP0 = st.scrollTop <= 4;
+  edgeFired = false;
+  edgePending = 0;
+}, { passive: true });
+stage().addEventListener('touchmove', e => {
+  if (!meta || meta.mode !== 'text' || edgeFired) return;
+  const dy = edgeY0 - e.touches[0].clientY;   // >0 手指上滑（想看下面）
+  const th = Math.max(48, stage().clientHeight * 0.05);
+  if (edgeB0 && dy > th) { edgeFired = true; edgePending = 1; }
+  else if (edgeP0 && -dy > th) { edgeFired = true; edgePending = -1; }
+}, { passive: true });
+stage().addEventListener('touchend', () => {
+  if (!meta || meta.mode !== 'text' || !edgePending) return;
+  edgeCommit(edgePending);
+}, { passive: true });
+stage().addEventListener('wheel', e => {
+  if (!meta || meta.mode !== 'text') return;
+  const st = stage(), now = Date.now();
+  if (now - edgeLock < 800) return;
+  if (e.deltaY > 0 && st.scrollTop >= st.scrollHeight - st.clientHeight - 4) { edgeLock = now; nextCh(); }
+  else if (e.deltaY < 0 && st.scrollTop <= 4) { edgeLock = now; prevCh(); }
+}, { passive: true });
+
 /* ══════════ 键盘（桌面测试用） ══════════ */
 document.addEventListener('keydown', e => {
   if ($('reader').classList.contains('hidden')) return;

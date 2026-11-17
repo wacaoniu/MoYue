@@ -71,18 +71,38 @@ object ReaderHtml {
             "var m=maxScroll();if(m>0)window.scrollTo(0,TR*m);}" +
             "function stop(){if(t){clearInterval(t);t=null;}}" +
             "document.addEventListener('touchstart',stop,{passive:true,once:true});" +
+            // WebView 上 head 脚本先于 body 解析执行：body 为空时高度恒等于视口（m=0 恒“稳定”），
+            // 不能据此停轮询——须等 body 有内容（真短章）或 m>0 后再判定稳定
             "t=setInterval(function(){var h=docH();if(h===prevH){stable++;}else{stable=0;prevH=h;}" +
-            "apply();tries++;if(stable>=5||tries>80){apply();stop();}},150);" +
+            "apply();tries++;var ready=!!(document.body&&document.body.firstChild);" +
+            "if((stable>=8&&(ready||maxScroll()>0))||tries>80){apply();stop();}},150);" +
             "var lastSent=-1;" +
             "function report(){var m=maxScroll();var y=window.pageYOffset||document.documentElement.scrollTop||0;" +
             "var r=m>0?(y/m):1;if(r<0)r=0;if(r>1)r=1;" +
             "if(Math.abs(r-lastSent)>0.006){lastSent=r;try{window.__AndroidReader.onScroll(r);}catch(e){}}}" +
             "window.addEventListener('scroll',report,{passive:true});" +
-            "window.addEventListener('load',report);" +
+            // WebView 上 head 内脚本执行时 body 可能尚未布局，轮询会提前判定“稳定”而停，
+            // load 时再补一次定位（覆盖恢复到章尾的场景）
+            "window.addEventListener('load',function(){apply();report();});" +
+            "window.addEventListener('resize',function(){apply();});" +
             "window.__rd={" +
             "page:function(d){window.scrollBy(0,Math.round(window.innerHeight*0.88*d));}," +
             "theme:function(bg,fg,f){var s=document.documentElement.style;s.setProperty('--rbg',bg);s.setProperty('--rfg',fg);s.setProperty('--rfont',f);}," +
             "anchor:function(a){TA=a;apply();}};" +
+            // 章底/章顶继续滑动 → 回调原生切章（touch 手势内只触发一次，抬手后执行，800ms 节流）
+            "var eLock=0,eY0=0,eB0=false,eT0=false,eFired=false,pEdge=0;" +
+            "function atBot(){return maxScroll()-(window.pageYOffset||0)<4;}" +
+            "function atTop(){return (window.pageYOffset||0)<4;}" +
+            "function edge(d){var n=Date.now();if(n-eLock<800)return;eLock=n;" +
+            "try{window.__AndroidReader.onEdge(d);}catch(e){}}" +
+            "document.addEventListener('touchstart',function(e){eY0=e.touches[0].clientY;eB0=atBot();eT0=atTop();eFired=false;pEdge=0;},{passive:true});" +
+            "document.addEventListener('touchmove',function(e){if(eFired){e.preventDefault();return;}" +
+            "var dy=eY0-e.touches[0].clientY;var th=Math.max(48,window.innerHeight*0.05);" +
+            "if(eB0&&dy>th){eFired=true;pEdge=1;e.preventDefault();}" +
+            "else if(eT0&&-dy>th){eFired=true;pEdge=-1;e.preventDefault();}},{passive:false});" +
+            // 抬手后才切章：手势进行中切章会让残余拖拽把新章刚恢复的滚动位置拖走
+            "document.addEventListener('touchend',function(){if(pEdge){edge(pEdge);pEdge=0;}},{passive:true});" +
+            "document.addEventListener('wheel',function(e){if(e.deltaY>0&&atBot())edge(1);else if(e.deltaY<0&&atTop())edge(-1);},{passive:true});" +
             "setTimeout(report,600);" +
             "})();</script>")
 

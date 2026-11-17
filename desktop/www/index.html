@@ -586,6 +586,19 @@ function loadTextChapter(idx, restore){
       if(m>0) ratio=Math.min(1,Math.max(0,fr.contentWindow.scrollY/m));
       saveProgress();
     },{passive:true});
+    // 章底/章顶继续滚动 → 切章（滚轮立即、触摸抬手后执行，避免残余拖拽破坏新章恢复位置；800ms 节流）
+    let eLock=0,eY0=0,eB0=false,eP0=false,eFired=false,ePending=0;
+    const atBot=()=>{const d=fr.contentDocument;if(!d)return false;return fr.contentWindow.scrollY>=d.documentElement.scrollHeight-fr.clientHeight-4;};
+    const atTop=()=>fr.contentWindow.scrollY<=4;
+    const edge=(d)=>{const n=Date.now();if(n-eLock<800)return;eLock=n;ePending=0;
+      if(d>0)nextCh();else prevCh();};
+    doc.addEventListener('wheel',e=>{if(e.deltaY>0&&atBot())edge(1);else if(e.deltaY<0&&atTop())edge(-1);},{passive:true});
+    doc.addEventListener('touchstart',e=>{eY0=e.touches[0].clientY;eB0=atBot();eP0=atTop();eFired=false;ePending=0;},{passive:true});
+    doc.addEventListener('touchmove',e=>{if(eFired)return;
+      const dy=eY0-e.touches[0].clientY,th=Math.max(48,fr.clientHeight*0.05);
+      if(eB0&&dy>th&&curCh<meta.spine.length-1){eFired=true;ePending=1;}
+      else if(eP0&&-dy>th&&curCh>0){eFired=true;ePending=-1;}},{passive:true});
+    doc.addEventListener('touchend',()=>{if(ePending)edge(ePending);},{passive:true});
   };
   fr.src=`/b/${meta.id}/f/${item.href}`;
 }

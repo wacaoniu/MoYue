@@ -104,6 +104,8 @@ import kotlin.math.roundToInt
 class ReaderWebView(context: Context) : WebView(context) {
     var onZoneTap: ((Int) -> Unit)? = null      // 0 左侧 1 中间 2 右侧
     var onNavigate: ((Uri) -> Unit)? = null
+    /** 章底/章顶继续滑动：1 下一章 / -1 上一章 */
+    var onEdge: ((Int) -> Unit)? = null
 
     /** 点击内文链接导航时，抑制同一次点击触发的分区动作 */
     var suppressZoneTap = false
@@ -144,12 +146,21 @@ class ReaderWebView(context: Context) : WebView(context) {
     fun eval(js: String) = evaluateJavascript(js, null)
 }
 
-private class ScrollBridge(private val scrollCb: (Double) -> Unit) {
+private class ScrollBridge(
+    private val scrollCb: (Double) -> Unit,
+    private val edgeCb: (Int) -> Unit,
+) {
     private val handler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
     fun onScroll(r: Double) {
         handler.post { scrollCb(r) }
+    }
+
+    /** 章底/章顶继续滑动（由注入的 JS 调用）：1 下一章 / -1 上一章 */
+    @JavascriptInterface
+    fun onEdge(dir: Int) {
+        handler.post { edgeCb(dir) }
     }
 }
 
@@ -284,6 +295,15 @@ fun ReaderScreen(bookId: String, onExit: () -> Unit, onSwitchMode: () -> Unit) {
             }
         }
         web?.onNavigate = { uri -> handleNavigate(uri) }
+        // 章底继续下滑 → 下一章；章顶继续上滑 → 上一章。
+        // 不走 page()：短章（不足一屏）的 ratio 恒为 1，page(-1) 的 ratio<0.035 条件会失效
+        web?.onEdge = { dir ->
+            android.util.Log.d("Moyue", "edge dir=$dir spineIndex=$spineIndex ratio=$ratio")
+            when {
+                dir > 0 && spineIndex < b.spine.lastIndex -> loadChapter(spineIndex + 1, null, 0.0)
+                dir < 0 && spineIndex > 0 -> loadChapter(spineIndex - 1, null, 1.0)
+            }
+        }
         web?.settings?.textZoom = fontScale
     }
 
@@ -374,7 +394,10 @@ fun ReaderScreen(bookId: String, onExit: () -> Unit, onSwitchMode: () -> Unit) {
                             return true
                         }
                     }
-                    addJavascriptInterface(ScrollBridge { r -> ratio = r }, "__AndroidReader")
+                    addJavascriptInterface(
+                        ScrollBridge({ r -> ratio = r }, { d -> onEdge?.invoke(d) }),
+                        "__AndroidReader",
+                    )
                     web = this
                 }
             },
