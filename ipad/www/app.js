@@ -12,7 +12,7 @@ const { STORE_BOOKS, STORE_COVERS } = MoYue;
 const $ = id => document.getElementById(id);
 const stage = () => $('stage');
 
-const APP_VERSION = '2.5';   // 与 GitHub Release tag 同步（v2.5）
+const APP_VERSION = '2.6';   // 与 GitHub Release tag 同步（v2.6）
 const RELEASES_API = 'https://api.github.com/repos/wacaoniu/MoYue/releases/latest';
 
 const THEMES = [["#FDFDFB", "#1B1D22"], ["#F6EFDD", "#57493A"], ["#CCE6CF", "#2C3A2E"], ["#101014", "#B8BCC6"]];

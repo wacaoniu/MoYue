@@ -30,7 +30,7 @@ INBOX = os.path.join(BASE, "收书箱")
 WWW = os.path.join(BASE, "www")
 
 # 检查更新：GitHub Releases（手动触发，平时不联网）
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 RELEASES_API = "https://api.github.com/repos/wacaoniu/MoYue/releases/latest"
 os.makedirs(BOOKS, exist_ok=True)
 os.makedirs(INBOX, exist_ok=True)
